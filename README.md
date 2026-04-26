@@ -1,14 +1,15 @@
 # agent
 
-Pydantic AI agent behind an OpenAI-compatible HTTP endpoint. All LLM
-calls and persistent memory go through your LiteLLM proxy. The agent
-itself holds no state — kill it, restart it, scale it horizontally;
-the proxy is the spine.
+Pydantic AI agent behind an OpenAI-compatible HTTP endpoint. LLM calls
+and persistent memory go through your LiteLLM proxy. Optional deferred
+tasks run on the agent's own Postgres so multiple replicas can claim
+work atomically.
 
 ```
 agent/
 ├── app.py                  agent + tools + FastAPI — read top to bottom
 ├── core.py                 Deps + model factory (shared with sub-agents)
+├── tasks.py                optional: Postgres-backed deferred tasks
 ├── prompts/system.md       agent's system prompt
 ├── ui.html                 chat UI at /
 ├── subagents/              auto-discovered sub-agents
@@ -16,18 +17,41 @@ agent/
 │       ├── agent.py        exports DESCRIPTION + agent
 │       ├── prompt.md
 │       └── tools.py        (optional) sub-agent's own tools
+├── migrations/
+│   └── 001_tasks.sql       run once before enabling tasks
 ├── tests/test_app.py
+├── docker-compose.yml      `docker compose up` — agent + Postgres
+├── Dockerfile
 ├── pyproject.toml
 └── .env.example
 ```
 
-## Run
+## Quickstart with docker-compose
+
+```sh
+cp .env.example .env       # set LITELLM_API_BASE + LITELLM_API_KEY + AGENT_ID
+docker compose up --build  # → http://localhost:8787
+```
+
+`docker-compose.yml` brings up Postgres alongside the agent, mounts
+`migrations/` into the postgres init dir so the schema is applied on
+first boot, and wires `ENABLE_TASKS=1` so the deferred-tasks tools
+light up.
+
+## Quickstart without docker
 
 ```sh
 cp .env.example .env       # set LITELLM_API_BASE + LITELLM_API_KEY + AGENT_ID
 uv sync
 uv run python app.py       # → http://localhost:8787
+
+# Optional: enable deferred tasks
+psql "$DATABASE_URL" -f migrations/001_tasks.sql
+echo 'ENABLE_TASKS=1' >> .env
+uv run python app.py
 ```
+
+## Talking to it
 
 ```sh
 curl localhost:8787/v1/chat/completions \
@@ -58,6 +82,8 @@ there's no special routing logic in your code.
 
   - `fetch(url)` — HTTP GET, body truncated to 20k.
   - `remember(note)` / `forget()` — append/clear the user's memory blob.
+  - `schedule(title, check_prompt, minutes)` /
+    `list_tasks()` / `cancel(id)` — only when `ENABLE_TASKS=1`.
 
 **MCP tools** — set `MCP_SERVERS=foo,bar`; the agent connects to each
 at `<proxy>/mcp/<id>` at startup. Whatever each server exposes is now
@@ -123,23 +149,36 @@ header (defaults to `"default"`), `user` from the OpenAI `user` field
 or `X-Agent-User` header — or the basic-auth username when the UI is
 authenticated.
 
-## Scheduling
+## Deferred tasks
 
-There's no separate tasks subsystem. If the agent needs to track
-something for later — "ping me when CI on PR 1234 is green" — it just
-writes a note via `remember`:
+A row in `tasks` per "ping me when X" the agent is tracking. Every
+60s, `tasks._tick` claims due rows with `FOR UPDATE SKIP LOCKED`,
+runs `check_agent` (a small specialist that returns
+`{done, reason, message}`), and on `done=True` atomically flips
+`pending → fired` and invokes `tasks.delivery`. The DB does the
+coordination — N replicas of the agent can run the same dispatcher
+without double-firing.
 
+Default `delivery` just logs. To push to Slack / email / a webhook,
+set the callback before the FastAPI lifespan starts:
+
+```python
+import tasks
+
+async def deliver(task: dict, message: str) -> None:
+    await slack.chat_postMessage(channel=task["channel"], text=message)
+
+tasks.delivery = deliver
 ```
-- WATCH: CI on github.com/foo/bar/pull/1234 — alert when green
-```
 
-The note is re-injected every turn. Whenever the agent runs next, it
-sees the watchlist and can fetch / decide / report.
+Tools wired when `ENABLE_TASKS=1`:
 
-For "wake me up at 3am" semantics, point an external cron at the
-agent that POSTs `{"messages":[{"role":"user","content":"check your
-watchlist"}]}` on a schedule. The agent reads memory, evaluates each
-watch, and replies (or invokes whatever delivery tool you've wired).
+  - `schedule(title, check_prompt, minutes)` — create a task.
+  - `list_tasks()` — pending tasks for the current user.
+  - `cancel(task_id)` — abort.
+
+Schema in `migrations/001_tasks.sql`. With docker-compose it's applied
+automatically on first boot.
 
 ## Auth
 
@@ -153,8 +192,8 @@ Two independent gates:
 Set neither: the server is open. Don't ship that.
 
 The basic-auth username flows into `Deps.user` when the request
-doesn't otherwise specify one — memory scopes correctly per UI user
-out of the box.
+doesn't otherwise specify one — memory and tasks scope correctly per
+UI user out of the box.
 
 ## Observability
 
@@ -164,11 +203,16 @@ collector. Pydantic AI emits OTel-compatible spans natively.
 
 ## Architecture notes
 
-- The agent has no DB. Memory and MCP both live on the proxy.
+- LLM and memory live on the LiteLLM proxy.
+- The agent has its own Postgres only when tasks are enabled — it's
+  the right place because multi-replica claim-and-fire needs atomic
+  reads/writes (`FOR UPDATE SKIP LOCKED`) that the proxy isn't shaped
+  to provide.
 - Errors raise. No `try/except` that swallows and returns an error
   string; those just delay the failure to a confusing place.
 - Sub-agents are tools. There's no special routing layer — the model
   picks tools by description, and some tools happen to call out to
   smaller agents.
-- The whole runtime is `app.py` (~280 lines) + `core.py` (~30). You
-  can read the codebase in fifteen minutes.
+- The whole runtime is `app.py` (~320 lines) + `core.py` (~30) +
+  optional `tasks.py` (~250). You can read the codebase in fifteen
+  minutes.

@@ -8,6 +8,8 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "httpx>=0.28",
     "python-dotenv>=1.0",
+    "asyncpg>=0.30",
+    "apscheduler>=3.11",
     "openai>=1.50",
 ]
 

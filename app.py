@@ -34,6 +34,7 @@ import secrets
 import sys
 import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -226,13 +227,43 @@ async def fetch(url: str) -> str:
     return body if len(body) <= 20_000 else body[:20_000] + "\n…[truncated]"
 
 
-# Scheduling pattern: there's no separate tasks subsystem. The agent
-# uses `remember` to write watch-style notes to memory ("watching CI on
-# PR 123, ping when green"). The notes are re-injected every turn, so
-# whenever the agent runs next it sees the watchlist and can act on it.
-# For "wake me up at 3am" semantics, point an external cron at the
-# agent that POSTs e.g. {"messages":[{"role":"user","content":"check
-# your watchlist"}]} on a schedule.
+# Deferred-task wiring. ENABLE_TASKS=1 (plus DATABASE_URL + the
+# migration applied) exposes three tools backed by a Postgres-backed
+# dispatcher. The DB is the agent's own — atomic claim-and-fire across
+# replicas via FOR UPDATE SKIP LOCKED.
+if os.environ.get("ENABLE_TASKS") == "1":
+    import tasks as _tasks
+
+    @agent.tool
+    async def schedule(
+        ctx: RunContext[Deps], title: str, check_prompt: str,
+        minutes: int = 60,
+    ) -> str:
+        """Schedule a task that fires once when its condition is met."""
+        tid = await _tasks.create(
+            tenant=ctx.deps.tenant, user=ctx.deps.user,
+            channel=ctx.deps.extras.get("channel", "http"),
+            title=title, check_prompt=check_prompt, minutes=minutes,
+        )
+        return f"scheduled `{tid}`: {title}"
+
+    @agent.tool
+    async def list_tasks(ctx: RunContext[Deps]) -> str:
+        """List the user's pending scheduled tasks."""
+        rows = await _tasks.list_for(ctx.deps.tenant, ctx.deps.user)
+        if not rows:
+            return "no pending tasks"
+        return "\n".join(
+            f"- `{r['id']}` {r['title']} "
+            f"(next: {r['next_run_at']:%Y-%m-%d %H:%M} UTC)"
+            for r in rows
+        )
+
+    @agent.tool
+    async def cancel(ctx: RunContext[Deps], task_id: str) -> str:
+        """Cancel a pending task by id."""
+        ok = await _tasks.cancel(task_id, ctx.deps.tenant, ctx.deps.user)
+        return "cancelled" if ok else "no matching pending task"
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +357,21 @@ def _to_history(
     return msgs[-1].content, history
 
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    scheduler = None
+    if os.environ.get("ENABLE_TASKS") == "1":
+        scheduler = _tasks.start(agent)
+    try:
+        yield
+    finally:
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
+        if os.environ.get("ENABLE_TASKS") == "1":
+            await _tasks.close_pool()
+
+
+app = FastAPI(lifespan=lifespan)
 
 if os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
