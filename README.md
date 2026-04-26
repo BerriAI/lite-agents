@@ -1,4 +1,4 @@
-# agent
+# lite-agents
 
 A minimal production template for self-hosted chat agents — with support for 100+ LLMs, UI, memory, task scheduling, and MCPs via LiteLLM Proxy. The agent is deployed behind a `/v1/chat/completions` endpoint.
 
