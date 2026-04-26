@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    background: #0e1014; color: #e6e8ef;
+  }
+  header {
+    padding: 10px 16px; border-bottom: 1px solid #262a36; background: #161922;
+    display: flex; align-items: center; gap: 12px;
+  }
+  header h1 { margin: 0; font-size: 13px; font-weight: 600; }
+  header .muted { color: #8a90a0; font-size: 12px; }
+  header .right { margin-left: auto; }
+  button {
+    background: transparent; color: inherit; border: 1px solid #262a36;
+    padding: 5px 10px; border-radius: 6px; font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: #6aa6ff; }
+  #log {
+    flex: 1; overflow-y: auto; padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .msg {
+    padding: 10px 12px; border: 1px solid #262a36; border-radius: 8px;
+    white-space: pre-wrap;
+  }
+  .msg.user { background: #1e2433; }
+  .msg .role {
+    display: block; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .04em; color: #8a90a0; margin-bottom: 4px;
+  }
+  form {
+    display: flex; gap: 8px; padding: 10px 16px;
+    border-top: 1px solid #262a36; background: #161922;
+  }
+  textarea {
+    flex: 1; min-height: 40px; max-height: 200px; resize: none;
+    padding: 8px 10px; border: 1px solid #262a36; border-radius: 6px;
+    background: #0e1014; color: inherit; font: inherit;
+  }
+  textarea:focus { outline: none; border-color: #6aa6ff; }
+  .send {
+    background: #6aa6ff; color: #0b0d12; border: 0; font-weight: 600;
+    padding: 0 14px;
+  }
+  .send[disabled] { opacity: .5; cursor: not-allowed; }
+</style>
+</head>
+<body>
+<header>
+  <h1>agent</h1><span class="muted">/v1/chat/completions</span>
+  <span class="right"><button id="clear">clear</button></span>
+</header>
+<div id="log"></div>
+<form id="form">
+  <textarea id="input" placeholder="Ask…" rows="1"></textarea>
+  <button class="send" type="submit">send</button>
+</form>
+<script>
+const logEl = document.getElementById("log");
+const form = document.getElementById("form");
+const input = document.getElementById("input");
+const send = form.querySelector(".send");
+const clear = document.getElementById("clear");
+
+let messages = [];
+
+function render() {
+  logEl.innerHTML = "";
+  for (const m of messages) {
+    const div = document.createElement("div");
+    div.className = "msg" + (m.role === "user" ? " user" : "");
+    const role = document.createElement("span");
+    role.className = "role"; role.textContent = m.role;
+    div.appendChild(role);
+    div.appendChild(document.createTextNode(m.content));
+    logEl.appendChild(div);
+  }
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+async function ask(text) {
+  messages.push({ role: "user", content: text });
+  const reply = { role: "assistant", content: "" };
+  messages.push(reply);
+  render();
+  send.disabled = true;
+  try {
+    const r = await fetch("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        messages: messages.slice(0, -1),
+        stream: true,
+        user: localStorage.getItem("user") || "web",
+      }),
+    });
+    if (!r.ok) {
+      reply.content = `[HTTP ${r.status}] ${await r.text()}`;
+      render(); return;
+    }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) !== -1) {
+        const block = buf.slice(0, i); buf = buf.slice(i + 2);
+        for (const line of block.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") continue;
+          try {
+            const d = JSON.parse(data).choices?.[0]?.delta?.content;
+            if (d) { reply.content += d; render(); }
+          } catch {}
+        }
+      }
+    }
+  } catch (e) {
+    reply.content = `[error] ${e.message}`; render();
+  } finally {
+    send.disabled = false; input.focus();
+  }
+}
+
+form.addEventListener("submit", e => {
+  e.preventDefault();
+  const t = input.value.trim();
+  if (!t) return;
+  input.value = ""; input.style.height = "auto";
+  ask(t);
+});
+input.addEventListener("input", () => {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 200) + "px";
+});
+input.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault(); form.requestSubmit();
+  }
+});
+clear.addEventListener("click", () => { messages = []; render(); input.focus(); });
+input.focus();
+</script>
+</body>
+</html>

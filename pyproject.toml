@@ -1,0 +1,24 @@
+[project]
+name = "agent"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic-ai-slim[mcp]>=1.84.1",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.28",
+    "python-dotenv>=1.0",
+    "openai>=1.50",
+]
+
+[project.optional-dependencies]
+otel = [
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-http>=1.27",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-instrumentation-httpx>=0.48b0",
+]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "httpx>=0.28"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
