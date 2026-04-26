@@ -1,7 +1,6 @@
 # agent
 
-Pydantic AI agent behind an OpenAI-compatible HTTP endpoint. LLM calls
-and persistent memory go through your LiteLLM proxy. Optional deferred
+A minimal template for deploying self-hosted Agents to production. This includes a Chat UI, Memory, Task Scheduling, and MCP server support needed to deploy your agent to production. This project is built with a Pydantic AI agent behind an OpenAI-compatible HTTP endpoint. LLM calls, MCP calls and persistent memory go through your LiteLLM proxy. Optional deferred
 tasks run on the agent's own Postgres so multiple replicas can claim
 work atomically.
 
