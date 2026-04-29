@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>shin</title>
+<title>lite-agents</title>
 <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -37,6 +37,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 .tb-btn-pr:hover{background:#22224a}
 .tb-btn-plan{background:#1a1a1a;color:#888;border:1px solid #2a2a2a}
 .tb-btn-plan:hover{background:#222;color:#aaa}
+.tb-btn-runs{background:#1a1a1a;color:#666;border:1px solid #2a2a2a;font-size:11px}
+.tb-btn-runs:hover{background:#222;color:#888}
+.tb-btn-runs.active{color:#60a5fa;border-color:#1e3a5f;background:#0f1e30}
 /* plan modal */
 #plan-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;align-items:center;justify-content:center}
 #plan-modal.open{display:flex}
@@ -120,6 +123,26 @@ button[type=submit]:disabled{background:#222;cursor:default;color:#555}
 .attachment-thumb img{height:52px;border-radius:6px;border:1px solid #2563eb;display:block}
 .attachment-thumb .rm{position:absolute;top:-5px;right:-5px;width:15px;height:15px;border-radius:50%;background:#333;color:#ccc;font-size:10px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;line-height:1}
 .attachment-thumb .rm:hover{background:#c0392b;color:#fff}
+/* runs panel */
+#runs-panel{display:none;flex:1;overflow-y:auto;padding:14px 16px;flex-direction:column;gap:12px}
+#runs-panel.visible{display:flex}
+#chat.hidden{display:none}
+.run-section-hdr{font-size:10px;font-weight:700;color:#333;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
+.run-event{display:flex;gap:10px;align-items:flex-start;font-size:11.5px;font-family:"SF Mono","Fira Code",monospace}
+.run-event-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:4px}
+.run-event-dot.started{background:#22c55e}
+.run-event-dot.completed{background:#60a5fa}
+.run-event-dot.failed{background:#f87171}
+.run-event-dot.waiting{background:#fbbf24}
+.run-event-dot.received{background:#a78bfa}
+.run-event-dot.other{background:#333}
+.run-event-body{flex:1;min-width:0}
+.run-event-step{color:#ccc;font-weight:600}
+.run-event-type{color:#444;margin-left:6px}
+.run-event-time{color:#333;font-size:10px;margin-top:1px}
+.run-event-data{color:#4a4a4a;font-size:10.5px;white-space:pre-wrap;word-break:break-word;margin-top:3px;max-height:60px;overflow:hidden}
+.run-event-data.expanded{max-height:none}
+.run-divider{border:none;border-top:1px solid #1a1a1a;margin:4px 0}
 </style>
 </head>
 <body>
@@ -144,6 +167,7 @@ button[type=submit]:disabled{background:#222;cursor:default;color:#555}
       </form>
     </div>
   </div>
+  <div id="runs-panel"></div>
 </div>
 <div id="plan-modal">
   <div id="plan-box">
@@ -166,11 +190,111 @@ const tbState = document.getElementById('tb-state');
 const tbLinks = document.getElementById('tb-links');
 const planModal = document.getElementById('plan-modal');
 const planContent = document.getElementById('plan-content');
+const chatPane = document.getElementById('chat');
+const runsPanel = document.getElementById('runs-panel');
 document.getElementById('plan-close').onclick = () => planModal.classList.remove('open');
 planModal.addEventListener('click', e => { if (e.target === planModal) planModal.classList.remove('open'); });
 
 let currentTaskId = null;
 let currentTask = null;
+let runsVisible = false;
+
+function showRunsPanel(taskId) {
+  runsVisible = true;
+  chatPane.classList.add('hidden');
+  runsPanel.classList.add('visible');
+  loadRunsPanel(taskId);
+}
+
+function hideRunsPanel() {
+  runsVisible = false;
+  chatPane.classList.remove('hidden');
+  runsPanel.classList.remove('visible');
+  const btn = document.getElementById('tb-runs-btn');
+  if (btn) btn.classList.remove('active');
+}
+
+function dotClass(eventType) {
+  if (eventType.endsWith('.started')) return 'started';
+  if (eventType.endsWith('.completed')) return 'completed';
+  if (eventType.endsWith('.failed')) return 'failed';
+  if (eventType === 'hook.waiting') return 'waiting';
+  if (eventType === 'hook.received') return 'received';
+  return 'other';
+}
+
+async function loadRunsPanel(taskId) {
+  runsPanel.innerHTML = '<div style="color:#333;font-size:12px;padding:4px 0">Loading…</div>';
+  try {
+    const [eventsRes, msgsRes] = await Promise.all([
+      fetch(`/api/runs/${taskId}/events`).then(r => r.json()),
+      fetch(`/api/runs/${taskId}/messages`).then(r => r.json()),
+    ]);
+    const events = Array.isArray(eventsRes) ? eventsRes : (eventsRes.events || []);
+    const msgs = Array.isArray(msgsRes) ? msgsRes : (msgsRes.messages || []);
+    events.sort((a, b) => (a.sequence_number ?? 0) - (b.sequence_number ?? 0));
+    msgs.sort((a, b) => (a.sequence_number ?? 0) - (b.sequence_number ?? 0));
+
+    runsPanel.innerHTML = '';
+
+    if (events.length) {
+      const hdr = document.createElement('div');
+      hdr.className = 'run-section-hdr';
+      hdr.textContent = 'Run events';
+      runsPanel.appendChild(hdr);
+
+      for (const ev of events) {
+        const row = document.createElement('div');
+        row.className = 'run-event';
+        const dc = dotClass(ev.event_type || '');
+        const ts = ev.created_at ? new Date(ev.created_at).toLocaleTimeString() : '';
+        const dataStr = ev.data ? JSON.stringify(ev.data, null, 2) : '';
+        row.innerHTML = `
+          <div class="run-event-dot ${dc}"></div>
+          <div class="run-event-body">
+            <div>
+              <span class="run-event-step">${esc(ev.step_name || '')}</span>
+              <span class="run-event-type">${esc(ev.event_type || '')}</span>
+            </div>
+            <div class="run-event-time">${esc(ts)} · seq ${ev.sequence_number ?? '?'}</div>
+            ${dataStr ? `<div class="run-event-data">${esc(dataStr)}</div>` : ''}
+          </div>`;
+        runsPanel.appendChild(row);
+        const divider = document.createElement('hr');
+        divider.className = 'run-divider';
+        runsPanel.appendChild(divider);
+      }
+    }
+
+    if (msgs.length) {
+      const hdr = document.createElement('div');
+      hdr.className = 'run-section-hdr';
+      hdr.style.marginTop = events.length ? '12px' : '0';
+      hdr.textContent = 'Messages';
+      runsPanel.appendChild(hdr);
+
+      for (const m of msgs) {
+        const row = document.createElement('div');
+        row.style.cssText = 'margin-bottom:10px';
+        const roleColor = m.role === 'user' ? '#60a5fa' : '#aaa';
+        const ts = m.created_at ? new Date(m.created_at).toLocaleTimeString() : '';
+        row.innerHTML = `
+          <div style="font-size:10px;color:${roleColor};font-weight:600;margin-bottom:3px;font-family:monospace">
+            ${esc(m.role)}
+            <span style="color:#333;font-weight:400;margin-left:6px">${esc(ts)}</span>
+          </div>
+          <div style="font-size:12px;color:#555;white-space:pre-wrap;word-break:break-word;max-height:80px;overflow:hidden">${esc((m.content||'').slice(0,300))}${(m.content||'').length > 300 ? '…' : ''}</div>`;
+        runsPanel.appendChild(row);
+      }
+    }
+
+    if (!events.length && !msgs.length) {
+      runsPanel.innerHTML = '<div style="color:#333;font-size:12px;padding:4px 0">No events yet.</div>';
+    }
+  } catch(e) {
+    runsPanel.innerHTML = `<div style="color:#f87171;font-size:12px">Error: ${esc(e.message)}</div>`;
+  }
+}
 
 function updateTaskBar(t) {
   if (!t) { taskBar.classList.remove('visible'); return; }
@@ -184,8 +308,6 @@ function updateTaskBar(t) {
     const a = document.createElement('a');
     a.className = 'tb-btn tb-btn-pr';
     a.href = t.pr_url; a.target = '_blank'; a.rel = 'noopener';
-    a.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z"/></svg> PR #`;
-    // extract PR number from URL if possible
     const m = t.pr_url.match(/\/pull\/(\d+)/);
     a.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z"/></svg> ${m ? 'PR #' + m[1] : 'View PR'}`;
     tbLinks.appendChild(a);
@@ -197,6 +319,15 @@ function updateTaskBar(t) {
     b.onclick = () => { planContent.textContent = t.plan; planModal.classList.add('open'); };
     tbLinks.appendChild(b);
   }
+  const runsBtn = document.createElement('button');
+  runsBtn.id = 'tb-runs-btn';
+  runsBtn.className = 'tb-btn tb-btn-runs' + (runsVisible ? ' active' : '');
+  runsBtn.textContent = 'Runs';
+  runsBtn.onclick = () => {
+    if (runsVisible) { hideRunsPanel(); runsBtn.classList.remove('active'); }
+    else { showRunsPanel(t.id); runsBtn.classList.add('active'); }
+  };
+  tbLinks.appendChild(runsBtn);
 }
 
 function badge(state) {
@@ -210,6 +341,7 @@ function renderTaskEl(t) {
   el.onclick = () => {
     currentTaskId = t.id;
     history.pushState({taskId: t.id}, '', '?task=' + t.id);
+    hideRunsPanel();
     loadTasks();
     loadTaskHistory(t.id);
   };
@@ -401,7 +533,6 @@ async function runStream(url, body, method = 'POST') {
     reply.classList.remove('cursor');
     btn.disabled = false;
     input.focus();
-    // refresh task bar after stream (picks up pr_url/plan)
     loadTasks();
   }
 }
@@ -464,7 +595,6 @@ async function loadTaskHistory(taskId) {
   } catch(e) { console.error('loadTaskHistory', e); }
 }
 
-// restore task from URL on load
 const urlTask = new URLSearchParams(location.search).get('task');
 if (urlTask) currentTaskId = urlTask;
 
@@ -472,6 +602,7 @@ window.addEventListener('popstate', e => {
   currentTaskId = (e.state && e.state.taskId) || null;
   log.innerHTML = '';
   updateTaskBar(null);
+  hideRunsPanel();
   if (currentTaskId) loadTaskHistory(currentTaskId);
   loadTasks();
 });
@@ -482,7 +613,7 @@ if (urlTask) loadTaskHistory(urlTask);
 // ── Screenshot attachments (drag-and-drop + paste) ────────────────────────────
 const overlay = document.getElementById('drop-overlay');
 const attachBar = document.getElementById('attachment-bar');
-const pendingPaths = [];   // uploaded paths to inject on send
+const pendingPaths = [];
 
 function addAttachment(objectUrl, serverPath) {
   pendingPaths.push(serverPath);
@@ -510,7 +641,6 @@ async function uploadFile(file) {
   return res.json();
 }
 
-// Drag-and-drop
 let dragDepth = 0;
 document.addEventListener('dragenter', e => {
   if (!e.dataTransfer.types.includes('Files')) return;
@@ -529,7 +659,6 @@ document.addEventListener('drop', async e => {
   }
 });
 
-// Paste (Cmd+V screenshot from clipboard)
 document.addEventListener('paste', async e => {
   const files = [...e.clipboardData.files].filter(f => f.type.startsWith('image/'));
   if (!files.length) return;
@@ -541,7 +670,6 @@ document.addEventListener('paste', async e => {
   }
 });
 
-// Inject paths on send
 const _origSend = send;
 send = async function() {
   if (pendingPaths.length) {
