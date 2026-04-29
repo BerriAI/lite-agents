@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>shin</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d0d0d;color:#e8e8e8;height:100dvh;display:flex}
+/* sidebar */
+#sidebar{width:200px;min-width:200px;background:#0f0f0f;border-right:1px solid #1a1a1a;display:flex;flex-direction:column;padding:10px 0;overflow-y:auto}
+#sidebar-hdr{font-size:10px;font-weight:700;color:#444;letter-spacing:.1em;text-transform:uppercase;padding:0 12px 8px}
+.task-item{padding:7px 12px;cursor:pointer;font-size:12px;border-left:2px solid transparent}
+.task-item:hover{background:#161616}
+.task-item.active{border-left-color:#2563eb;background:#131313}
+.task-title{color:#bbb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:3px}
+.task-badge{display:inline-block;font-size:10px;font-weight:600;padding:1px 6px;border-radius:999px}
+.badge-open{background:#1a3a1a;color:#4ade80}
+.badge-grilling{background:#2a2a1a;color:#fbbf24}
+.badge-grill_done{background:#2a1a1a;color:#fb923c}
+.badge-planning{background:#1a2a3a;color:#60a5fa}
+.badge-plan_approved{background:#2a1a3a;color:#c084fc}
+.badge-implemented{background:#3a2a1a;color:#fb923c}
+.badge-pr_up{background:#1a1a3a;color:#818cf8}
+.badge-pr_merged{background:#1a3a2a;color:#34d399}
+/* main */
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+/* task top bar */
+#task-bar{display:none;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid #1a1a1a;background:#0f0f0f;flex-shrink:0;min-height:40px}
+#task-bar.visible{display:flex}
+#tb-title{font-size:13px;font-weight:600;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px}
+#tb-state{font-size:10px;font-weight:700;padding:2px 7px;border-radius:999px;white-space:nowrap}
+#tb-links{display:flex;gap:6px;align-items:center;margin-left:auto;flex-shrink:0}
+.tb-btn{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:4px 10px;border-radius:6px;border:none;cursor:pointer;text-decoration:none;white-space:nowrap}
+.tb-btn-pr{background:#1a1a3a;color:#818cf8;border:1px solid #31316a}
+.tb-btn-pr:hover{background:#22224a}
+.tb-btn-plan{background:#1a1a1a;color:#888;border:1px solid #2a2a2a}
+.tb-btn-plan:hover{background:#222;color:#aaa}
+/* plan modal */
+#plan-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;align-items:center;justify-content:center}
+#plan-modal.open{display:flex}
+#plan-box{background:#111;border:1px solid #2a2a2a;border-radius:12px;width:640px;max-width:92vw;max-height:80vh;display:flex;flex-direction:column}
+#plan-box-hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #1a1a1a}
+#plan-box-hdr span{font-size:13px;font-weight:600;color:#ccc}
+#plan-close{background:none;border:none;color:#555;font-size:18px;cursor:pointer;line-height:1;padding:0}
+#plan-close:hover{color:#aaa}
+#plan-content{overflow-y:auto;padding:16px;font-size:12.5px;color:#aaa;line-height:1.7;white-space:pre-wrap;word-break:break-word}
+/* chat area */
+#chat{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:14px 16px 0}
+#log{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding-right:4px}
+.bubble-user{align-self:flex-end;max-width:72%;background:#2563eb;color:#fff;padding:9px 13px;border-radius:16px 16px 4px 16px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.reply{align-self:flex-start;width:100%;max-width:680px;display:flex;flex-direction:column;gap:3px}
+/* event rows */
+.ev{font-family:"SF Mono","Fira Code",monospace;font-size:11.5px;line-height:1.5}
+.ev-status{color:#444;padding:1px 0}
+.ev-status .dot{color:#22c55e;margin-right:5px}
+.ev-thinking{color:#444;font-size:11.5px;padding:1px 0}
+.ev-thinking .dot{color:#22c55e;margin-right:5px;animation:pulse 1.2s ease-in-out infinite;display:inline-block}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}
+.ev-tool-call{display:flex;align-items:baseline;gap:5px;padding:1px 0}
+.ev-tool-call .dot{color:#333;font-size:9px;flex-shrink:0}
+.ev-tool-call .name{color:#ccc;font-weight:600}
+.ev-tool-call .args{color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:480px}
+.ev-tool-result{display:flex;flex-direction:column;padding-left:14px}
+.ev-tool-result .row{display:flex;gap:4px}
+.ev-tool-result .connector{color:#333;flex-shrink:0}
+.ev-tool-result .output{color:#555;white-space:pre-wrap;word-break:break-word;font-size:11px;max-height:60px;overflow:hidden}
+.ev-tool-result .output.expanded{max-height:none}
+.ev-tool-result .expand-btn{color:#444;font-size:10.5px;cursor:pointer;background:none;border:none;text-align:left;font-family:inherit;padding-top:1px}
+.ev-tool-result .expand-btn:hover{color:#777}
+.ev-text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:13px;line-height:1.65;color:#d4d4d4;padding:3px 0}
+.ev-text h1,.ev-text h2,.ev-text h3{color:#f0f0f0;margin:10px 0 4px;font-weight:600}
+.ev-text h1{font-size:15px}.ev-text h2{font-size:13px}.ev-text h3{font-size:12px}
+.ev-text p{margin:3px 0}
+.ev-text ul,.ev-text ol{padding-left:16px;margin:3px 0}
+.ev-text code{background:#1e1e1e;border-radius:3px;padding:1px 5px;font-size:11px;color:#ce9178}
+.ev-text pre{background:#1e1e1e;border-radius:6px;padding:9px 11px;margin:5px 0;overflow-x:auto}
+.ev-text pre code{background:none;padding:0;color:#ce9178}
+.ev-text strong{color:#f0f0f0}
+.ev-text img{max-width:100%;border-radius:8px;margin:6px 0;border:1px solid #333;display:block}
+.ev-text blockquote{border-left:3px solid #333;padding-left:10px;color:#777;margin:3px 0}
+.ev-text table{border-collapse:collapse;font-size:11.5px;margin:5px 0}
+.ev-text th,.ev-text td{border:1px solid #2a2a2a;padding:4px 8px}
+.ev-text th{background:#181818;color:#bbb}
+.ev-image img{max-width:100%;border-radius:8px;margin-top:4px;border:1px solid #333}
+.ev-stats{color:#7a6800;font-size:10.5px;padding-top:3px}
+.ev-error{color:#f87171;font-size:11.5px}
+/* banners */
+.approve-banner,.grill-banner{margin-top:8px;padding:11px 14px;border-radius:9px;display:flex;flex-direction:column;gap:7px}
+.approve-banner{background:#0f2b0f;border:1px solid #166534}
+.grill-banner{background:#2a1e0a;border:1px solid #92400e}
+.approve-banner .banner-row,.grill-banner .banner-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.approve-banner span{font-size:12.5px;color:#86efac}
+.grill-banner span{font-size:12.5px;color:#fcd34d}
+.approve-banner button,.grill-banner button{border:none;border-radius:7px;color:#fff;cursor:pointer;font-size:12px;font-weight:700;padding:6px 16px;white-space:nowrap}
+.approve-banner button{background:#166534}
+.approve-banner button:hover{background:#15803d}
+.grill-banner button{background:#92400e}
+.grill-banner button:hover{background:#b45309}
+.approve-banner button:disabled,.grill-banner button:disabled{background:#333;cursor:default}
+.grill-banner textarea{width:100%;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#f0f0f0;font-size:12px;padding:7px 10px;resize:vertical;font-family:inherit;min-height:44px;outline:none}
+.grill-banner textarea:focus{border-color:#92400e}
+/* cursor */
+.cursor::after{content:'▋';animation:blink .7s steps(1) infinite;color:#22c55e}
+@keyframes blink{50%{opacity:0}}
+/* form */
+#form-wrap{padding:10px 0 14px;flex-shrink:0}
+#form{display:flex;gap:7px}
+#input{flex:1;background:#161616;border:1px solid #222;border-radius:11px;color:#f0f0f0;font-size:13px;padding:9px 13px;resize:none;outline:none;line-height:1.5;max-height:130px;overflow-y:auto}
+#input:focus{border-color:#333}
+button[type=submit]{background:#2563eb;border:none;border-radius:11px;color:#fff;cursor:pointer;font-size:13px;font-weight:600;padding:9px 16px;white-space:nowrap}
+button[type=submit]:hover{background:#1d4ed8}
+button[type=submit]:disabled{background:#222;cursor:default;color:#555}
+#drop-overlay{display:none;position:fixed;inset:0;background:rgba(37,99,235,.12);border:2px dashed #2563eb;z-index:100;align-items:center;justify-content:center;font-size:18px;color:#93c5fd;pointer-events:none;border-radius:4px}
+#drop-overlay.active{display:flex}
+#attachment-bar{display:none;gap:6px;flex-wrap:wrap;padding:0 0 6px}
+#attachment-bar.has-items{display:flex}
+.attachment-thumb{position:relative}
+.attachment-thumb img{height:52px;border-radius:6px;border:1px solid #2563eb;display:block}
+.attachment-thumb .rm{position:absolute;top:-5px;right:-5px;width:15px;height:15px;border-radius:50%;background:#333;color:#ccc;font-size:10px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;line-height:1}
+.attachment-thumb .rm:hover{background:#c0392b;color:#fff}
+</style>
+</head>
+<body>
+<div id="drop-overlay">Drop screenshot here</div>
+<div id="sidebar">
+  <div id="sidebar-hdr">Tasks</div>
+  <div id="task-list"></div>
+</div>
+<div id="main">
+  <div id="task-bar">
+    <span id="tb-title"></span>
+    <span id="tb-state" class="task-badge"></span>
+    <div id="tb-links"></div>
+  </div>
+  <div id="chat">
+    <div id="log"></div>
+    <div id="attachment-bar"></div>
+    <div id="form-wrap">
+      <form id="form" onsubmit="return false">
+        <textarea id="input" rows="1" placeholder="Describe the issue…"></textarea>
+        <button type="submit" id="btn">Send</button>
+      </form>
+    </div>
+  </div>
+</div>
+<div id="plan-modal">
+  <div id="plan-box">
+    <div id="plan-box-hdr">
+      <span>Plan</span>
+      <button id="plan-close">×</button>
+    </div>
+    <div id="plan-content"></div>
+  </div>
+</div>
+
+<script>
+const log = document.getElementById('log');
+const input = document.getElementById('input');
+const btn = document.getElementById('btn');
+const taskList = document.getElementById('task-list');
+const taskBar = document.getElementById('task-bar');
+const tbTitle = document.getElementById('tb-title');
+const tbState = document.getElementById('tb-state');
+const tbLinks = document.getElementById('tb-links');
+const planModal = document.getElementById('plan-modal');
+const planContent = document.getElementById('plan-content');
+document.getElementById('plan-close').onclick = () => planModal.classList.remove('open');
+planModal.addEventListener('click', e => { if (e.target === planModal) planModal.classList.remove('open'); });
+
+let currentTaskId = null;
+let currentTask = null;
+
+function updateTaskBar(t) {
+  if (!t) { taskBar.classList.remove('visible'); return; }
+  currentTask = t;
+  taskBar.classList.add('visible');
+  tbTitle.textContent = t.title || 'Untitled';
+  tbState.className = `task-badge badge-${t.state}`;
+  tbState.textContent = t.state.replace(/_/g, ' ');
+  tbLinks.innerHTML = '';
+  if (t.pr_url) {
+    const a = document.createElement('a');
+    a.className = 'tb-btn tb-btn-pr';
+    a.href = t.pr_url; a.target = '_blank'; a.rel = 'noopener';
+    a.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z"/></svg> PR #`;
+    // extract PR number from URL if possible
+    const m = t.pr_url.match(/\/pull\/(\d+)/);
+    a.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z"/></svg> ${m ? 'PR #' + m[1] : 'View PR'}`;
+    tbLinks.appendChild(a);
+  }
+  if (t.plan) {
+    const b = document.createElement('button');
+    b.className = 'tb-btn tb-btn-plan';
+    b.textContent = 'Plan';
+    b.onclick = () => { planContent.textContent = t.plan; planModal.classList.add('open'); };
+    tbLinks.appendChild(b);
+  }
+}
+
+function badge(state) {
+  return `<span class="task-badge badge-${state}">${state.replace(/_/g,' ')}</span>`;
+}
+function renderTaskEl(t) {
+  const el = document.createElement('div');
+  el.className = 'task-item' + (t.id === currentTaskId ? ' active' : '');
+  el.dataset.id = t.id;
+  el.innerHTML = `<div class="task-title">${esc(t.title)}</div>${badge(t.state)}`;
+  el.onclick = () => {
+    currentTaskId = t.id;
+    history.pushState({taskId: t.id}, '', '?task=' + t.id);
+    loadTasks();
+    loadTaskHistory(t.id);
+  };
+  return el;
+}
+function upsertTask(t) {
+  const existing = taskList.querySelector(`[data-id="${t.id}"]`);
+  const el = renderTaskEl(t);
+  if (existing) taskList.replaceChild(el, existing);
+  else taskList.prepend(el);
+  if (t.id === currentTaskId) updateTaskBar(t);
+}
+async function loadTasks() {
+  const res = await fetch('/tasks');
+  const all = await res.json();
+  taskList.innerHTML = '';
+  all.forEach(t => taskList.appendChild(renderTaskEl(t)));
+  const cur = all.find(t => t.id === currentTaskId);
+  if (cur) updateTaskBar(cur);
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function appendEvent(container, ev) {
+  let el;
+  switch (ev.type) {
+    case 'status': {
+      el = document.createElement('div');
+      el.className = 'ev ev-status';
+      el.innerHTML = `<span class="dot">●</span>${esc(ev.text)}`;
+      break;
+    }
+    case 'tool_call': {
+      el = document.createElement('div');
+      el.className = 'ev ev-tool-call';
+      el.dataset.toolId = ev.id;
+      el.innerHTML = `<span class="dot">◆</span><span class="name">${esc(ev.name)}</span><span class="args">(${esc(ev.summary)})</span>`;
+      break;
+    }
+    case 'tool_result': {
+      el = document.createElement('div');
+      el.className = 'ev ev-tool-result';
+      const lines = (ev.content || '').split('\n');
+      const preview = lines.slice(0, 4).join('\n');
+      const more = lines.length > 4 ? lines.length - 4 : 0;
+      const row = document.createElement('div');
+      row.className = 'row';
+      const connector = document.createElement('span');
+      connector.className = 'connector'; connector.textContent = '└';
+      const outputEl = document.createElement('div');
+      outputEl.className = 'output'; outputEl.textContent = preview;
+      row.appendChild(connector); row.appendChild(outputEl);
+      el.appendChild(row);
+      if (more > 0) {
+        const expandBtn = document.createElement('button');
+        expandBtn.className = 'expand-btn';
+        expandBtn.textContent = `+${more} lines`;
+        expandBtn.onclick = () => { outputEl.textContent = ev.content; outputEl.classList.add('expanded'); expandBtn.remove(); };
+        el.appendChild(expandBtn);
+      }
+      break;
+    }
+    case 'image': {
+      const filename = ev.path.split('/').pop();
+      el = document.createElement('div');
+      el.className = 'ev ev-image';
+      el.innerHTML = `<img src="/screenshots/${esc(filename)}" alt="screenshot" />`;
+      break;
+    }
+    case 'text': {
+      el = document.createElement('div');
+      el.className = 'ev ev-text';
+      el.innerHTML = marked.parse(ev.text);
+      break;
+    }
+    case 'stats': {
+      const s = ev.duration_s.toFixed(1);
+      const cost = ev.cost ? ` · $${ev.cost.toFixed(4)}` : '';
+      el = document.createElement('div');
+      el.className = 'ev ev-stats';
+      el.innerHTML = `${s}s · ↑${ev.output_tokens}${cost}`;
+      break;
+    }
+    case 'error': {
+      el = document.createElement('div');
+      el.className = 'ev ev-error';
+      el.textContent = 'error: ' + ev.text;
+      break;
+    }
+    default: return;
+  }
+  container.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+}
+
+function showGrillApproveBanner(taskId, container) {
+  const banner = document.createElement('div');
+  banner.className = 'grill-banner';
+  banner.innerHTML = `
+    <div class="banner-row"><span>Questions answered — add corrections or leave blank.</span></div>
+    <textarea id="grill-notes" placeholder="Optional corrections…"></textarea>
+    <div class="banner-row"><button id="grill-btn">→ Proceed to Plan</button></div>`;
+  container.after(banner);
+  banner.querySelector('#grill-btn').onclick = async () => {
+    const notes = banner.querySelector('#grill-notes').value.trim();
+    banner.querySelector('#grill-btn').disabled = true;
+    banner.remove();
+    await runStream(`/tasks/${taskId}/grill-approve`, notes ? { user_notes: notes } : {}, 'POST');
+  };
+}
+
+function showApproveBanner(taskId, container) {
+  const banner = document.createElement('div');
+  banner.className = 'approve-banner';
+  banner.innerHTML = `
+    <div class="banner-row">
+      <span>Plan ready — approve to implement.</span>
+      <button id="approve-btn">✓ Approve &amp; Implement</button>
+    </div>`;
+  container.after(banner);
+  banner.querySelector('#approve-btn').onclick = async () => {
+    banner.querySelector('#approve-btn').disabled = true;
+    banner.querySelector('span').textContent = 'Implementing…';
+    banner.remove();
+    await runStream(`/tasks/${taskId}/approve`, null, 'POST');
+  };
+}
+
+async function runStream(url, body, method = 'POST') {
+  const reply = document.createElement('div');
+  reply.className = 'reply cursor';
+  log.appendChild(reply);
+  log.scrollTop = log.scrollHeight;
+
+  const thinkingEl = document.createElement('div');
+  thinkingEl.className = 'ev ev-thinking';
+  thinkingEl.innerHTML = '<span class="dot">●</span><span class="label">Thinking… 0s</span>';
+  reply.appendChild(thinkingEl);
+  const startTs = Date.now();
+  const timer = setInterval(() => {
+    const lbl = thinkingEl.querySelector('.label');
+    if (lbl) lbl.textContent = `Thinking… ${((Date.now()-startTs)/1000).toFixed(0)}s`;
+  }, 1000);
+  let gotReal = false;
+
+  try {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(url, opts);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    let showApprove = false, showGrillApprove = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6);
+        if (payload === '[DONE]') break;
+        const data = JSON.parse(payload);
+        if (data.task) {
+          const isNew = currentTaskId !== data.task.id;
+          currentTaskId = data.task.id;
+          upsertTask(data.task);
+          if (isNew) history.pushState({taskId: data.task.id}, '', '?task=' + data.task.id);
+        }
+        if (data.show_approve) { showApprove = true; continue; }
+        if (data.show_grill_approve) { showGrillApprove = true; continue; }
+        if (!gotReal && data.type && data.type !== 'status') {
+          gotReal = true; clearInterval(timer); thinkingEl.remove();
+        }
+        appendEvent(reply, data);
+      }
+    }
+    if (showGrillApprove) showGrillApproveBanner(currentTaskId, reply);
+    if (showApprove) showApproveBanner(currentTaskId, reply);
+  } catch (e) {
+    appendEvent(reply, { type: 'error', text: e.message });
+  } finally {
+    clearInterval(timer);
+    if (thinkingEl.parentNode) thinkingEl.remove();
+    reply.classList.remove('cursor');
+    btn.disabled = false;
+    input.focus();
+    // refresh task bar after stream (picks up pr_url/plan)
+    loadTasks();
+  }
+}
+
+async function send() {
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = ''; input.style.height = '';
+  btn.disabled = true;
+  const userBubble = document.createElement('div');
+  userBubble.className = 'bubble-user';
+  userBubble.textContent = text;
+  log.appendChild(userBubble);
+  await runStream('/chat/stream', { message: text, task_id: currentTaskId });
+}
+
+document.getElementById('form').addEventListener('submit', send);
+input.addEventListener('keydown', e => { if (e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();} });
+input.addEventListener('input', () => { input.style.height='auto'; input.style.height=input.scrollHeight+'px'; });
+
+async function loadTaskHistory(taskId) {
+  try {
+    const [msgsRes, tasksRes] = await Promise.all([
+      fetch(`/api/runs/${taskId}/messages`).then(r => r.json()),
+      fetch('/tasks').then(r => r.json()),
+    ]);
+    const msgs = Array.isArray(msgsRes) ? msgsRes : (msgsRes.messages || []);
+    msgs.sort((a, b) => (a.sequence_number ?? 0) - (b.sequence_number ?? 0));
+    log.innerHTML = '';
+    for (const m of msgs) {
+      if (m.role === 'user') {
+        const el = document.createElement('div');
+        el.className = 'bubble-user';
+        el.textContent = m.content;
+        log.appendChild(el);
+      } else {
+        const reply = document.createElement('div');
+        reply.className = 'reply';
+        const el = document.createElement('div');
+        el.className = 'ev ev-text';
+        el.innerHTML = marked.parse(m.content);
+        reply.appendChild(el);
+        log.appendChild(reply);
+      }
+    }
+    if (!msgs.length) {
+      const el = document.createElement('div');
+      el.style.cssText = 'color:#333;font-size:12px;padding:6px 0';
+      el.textContent = 'No messages yet.';
+      log.appendChild(el);
+    }
+    log.scrollTop = log.scrollHeight;
+    const task = (Array.isArray(tasksRes) ? tasksRes : []).find(t => t.id === taskId);
+    if (task) {
+      upsertTask(task);
+      updateTaskBar(task);
+      if (task.state === 'grill_done') showGrillApproveBanner(taskId, log.lastElementChild || log);
+      else if (task.state === 'plan_approved') showApproveBanner(taskId, log.lastElementChild || log);
+    }
+  } catch(e) { console.error('loadTaskHistory', e); }
+}
+
+// restore task from URL on load
+const urlTask = new URLSearchParams(location.search).get('task');
+if (urlTask) currentTaskId = urlTask;
+
+window.addEventListener('popstate', e => {
+  currentTaskId = (e.state && e.state.taskId) || null;
+  log.innerHTML = '';
+  updateTaskBar(null);
+  if (currentTaskId) loadTaskHistory(currentTaskId);
+  loadTasks();
+});
+
+loadTasks();
+if (urlTask) loadTaskHistory(urlTask);
+
+// ── Screenshot attachments (drag-and-drop + paste) ────────────────────────────
+const overlay = document.getElementById('drop-overlay');
+const attachBar = document.getElementById('attachment-bar');
+const pendingPaths = [];   // uploaded paths to inject on send
+
+function addAttachment(objectUrl, serverPath) {
+  pendingPaths.push(serverPath);
+  const wrap = document.createElement('div');
+  wrap.className = 'attachment-thumb';
+  const img = document.createElement('img');
+  img.src = objectUrl;
+  const rm = document.createElement('button');
+  rm.className = 'rm'; rm.textContent = '×';
+  rm.onclick = () => {
+    pendingPaths.splice(pendingPaths.indexOf(serverPath), 1);
+    wrap.remove();
+    if (!pendingPaths.length) attachBar.classList.remove('has-items');
+  };
+  wrap.append(img, rm);
+  attachBar.append(wrap);
+  attachBar.classList.add('has-items');
+}
+
+async function uploadFile(file) {
+  const fd = new FormData();
+  fd.append('file', file, file.name || 'screenshot.png');
+  const res = await fetch('/upload', { method: 'POST', body: fd });
+  if (!res.ok) throw new Error(`upload ${res.status}`);
+  return res.json();
+}
+
+// Drag-and-drop
+let dragDepth = 0;
+document.addEventListener('dragenter', e => {
+  if (!e.dataTransfer.types.includes('Files')) return;
+  dragDepth++; overlay.classList.add('active');
+});
+document.addEventListener('dragleave', () => {
+  if (--dragDepth <= 0) { dragDepth = 0; overlay.classList.remove('active'); }
+});
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', async e => {
+  e.preventDefault(); dragDepth = 0; overlay.classList.remove('active');
+  for (const file of [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'))) {
+    const objectUrl = URL.createObjectURL(file);
+    try { const { path } = await uploadFile(file); addAttachment(objectUrl, path); }
+    catch (err) { console.error('upload failed', err); }
+  }
+});
+
+// Paste (Cmd+V screenshot from clipboard)
+document.addEventListener('paste', async e => {
+  const files = [...e.clipboardData.files].filter(f => f.type.startsWith('image/'));
+  if (!files.length) return;
+  e.preventDefault();
+  for (const file of files) {
+    const objectUrl = URL.createObjectURL(file);
+    try { const { path } = await uploadFile(file); addAttachment(objectUrl, path); }
+    catch (err) { console.error('upload failed', err); }
+  }
+});
+
+// Inject paths on send
+const _origSend = send;
+send = async function() {
+  if (pendingPaths.length) {
+    const refs = pendingPaths.map(p => `[screenshot: ${p}]`).join(' ');
+    input.value = input.value ? input.value + '\n' + refs : refs;
+    pendingPaths.length = 0;
+    attachBar.innerHTML = ''; attachBar.classList.remove('has-items');
+  }
+  await _origSend();
+};
+</script>
+</body>
+</html>
