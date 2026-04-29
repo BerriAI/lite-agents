@@ -29,9 +29,7 @@ import {
   runImplement,
   runImplementFromPlan,
 } from "./core.js";
-import { claudeCodeAgent } from "./agents/claude-code.js";
-
-const agent = claudeCodeAgent;
+import { agent } from "./agent.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCREENSHOT_DIR = "/tmp/claude-screenshots";
