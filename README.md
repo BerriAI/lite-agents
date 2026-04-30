@@ -12,7 +12,7 @@ You get four things:
 |---|---|
 | **durable runs** | tasks survive restarts, resume after crashes |
 | **sessions** | conversation history persisted per run |
-| **memory** | each task gets its own git worktree — state never leaks between runs |
+| **memory** | store user preferences about agent tasks |
 | **cron** | schedule agents on a recurring trigger |
 
 Backed by LiteLLM gateway. No database to set up. No queue to run.
