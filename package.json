@@ -1,9 +1,12 @@
 {
-  "name": "shin-builder-js",
+  "name": "lite-agents",
   "version": "1.0.0",
-  "description": "AI agent that receives issues, plans a fix against LiteLLM, and waits for approval before implementing.",
+  "description": "Run AI agents without managing infrastructure.",
   "main": "src/app.js",
   "type": "module",
+  "bin": {
+    "lite-agents": "./bin/init.js"
+  },
   "scripts": {
     "start": "tsx src/app.ts",
     "dev": "tsx watch src/app.ts"
@@ -16,7 +19,7 @@
     "uuid": "^9.0.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "devDependencies": {
     "@types/express": "^4.17.25",
