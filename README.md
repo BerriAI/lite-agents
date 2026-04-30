@@ -15,12 +15,16 @@ You get four things:
 | **memory** | each task gets its own git worktree — state never leaks between runs |
 | **cron** | schedule agents on a recurring trigger |
 
-Backed by LiteLLM gateway. It stores run state, conversation history, and the resume ID needed to pick up a crashed Claude session. No database to set up, no queue to run.
+```mermaid
+graph LR
+  A["your agent"] --> G["LiteLLM gateway"]
+  G --> R["run state"]
+  G --> H["conversation history"]
+  G --> S["resume ID\n(crash recovery)"]
+  G --> C["cron triggers"]
+```
 
-```
-your agent  ──▶  LiteLLM gateway  ──▶  WorkflowRun / WorkflowEvent / WorkflowMessage
-                 (stores everything)
-```
+No database to set up. No queue to run.
 
 ---
 
