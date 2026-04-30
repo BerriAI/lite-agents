@@ -100,6 +100,38 @@ Open http://localhost:8001
 
 ---
 
+## Workflows
+
+The problem every long-running agent hits: your process dies, and all state is gone. Which step was it on? What did the user say? Where did it crash?
+
+`workflows.ts` is a thin client over the LiteLLM gateway that solves this. Every workflow gets an ID. You append events and messages as your agent works. On restart, you fetch active workflows and resume from where they left off.
+
+```typescript
+import { createWorkflow, getWorkflow, updateWorkflow, appendEvent, appendMessage, getEvents } from "./workflows.js";
+
+// start a workflow
+const wf = await createWorkflow("my-agent", { task: "refactor auth module" });
+
+// record progress
+await appendEvent(wf.id, "step.started", "planning");
+await appendMessage(wf.id, "assistant", "Here is my plan...", sessionId);
+
+// update metadata as state changes
+await updateWorkflow(wf.id, { metadata: { ...wf.metadata, step: "implementing" } });
+
+// on restart — fetch what's still running
+const active = await listWorkflows({ status: "running" });
+for (const wf of active) {
+  const events = await getEvents(wf.id);
+  const lastSessionId = events.at(-1)?.data?.session_id;
+  // resume from lastSessionId
+}
+```
+
+`metadata` is a free-form JSON object — store whatever your agent needs to resume: current step, session IDs, file paths, anything.
+
+---
+
 ## Env vars
 
 | Var | Required | Default |
