@@ -6,16 +6,16 @@ import { randomBytes } from "crypto";
 import { fileURLToPath } from "url";
 
 import {
-  WorkflowRun,
-  createRun,
-  getRun,
-  updateRun,
-  listRuns,
+  Workflow,
+  createWorkflow,
+  getWorkflow,
+  updateWorkflow,
+  listWorkflows,
   appendEvent,
   appendMessage,
-  getRunEvents,
-  getRunMessages,
-} from "./runs.js";
+  getEvents,
+  getMessages,
+} from "./workflows.js";
 
 import { AgentEvent, runGrill, runPlan, runImplement, runImplementFromPlan } from "./core.js";
 import { claudeCodeAgent as agent } from "./agents/claude-code.js";
@@ -41,13 +41,13 @@ interface Task {
   prUrl: string | null;
 }
 
-function runToTask(run: WorkflowRun): Task {
-  const m = run.metadata;
+function workflowToTask(w: Workflow): Task {
+  const m = w.metadata;
   return {
-    id: run.id,
+    id: w.id,
     title: (m.title as string) ?? "",
     state: (m.state as string) ?? "open",
-    createdAt: run.createdAt,
+    createdAt: w.createdAt,
     worktree: (m.worktree_path as string | null) ?? null,
     plan: (m.plan_text as string | null) ?? null,
     grillSessionId: (m.grill_session_id as string | null) ?? null,
@@ -69,40 +69,40 @@ function taskMeta(t: Task): Record<string, unknown> {
 }
 
 async function getTask(id: string): Promise<Task | null> {
-  const run = await getRun(id);
-  return run ? runToTask(run) : null;
+  const w = await getWorkflow(id);
+  return w ? workflowToTask(w) : null;
 }
 
 async function createTask(title: string): Promise<Task> {
-  const run = await createRun(WORKFLOW_TYPE, {
+  const w = await createWorkflow(WORKFLOW_TYPE, {
     state: "open", title: title.slice(0, 80),
     worktree_path: null, plan_text: null,
     grill_session_id: null, session_id: null, pr_url: null,
   });
-  return runToTask(run);
+  return workflowToTask(w);
 }
 
 async function saveTask(t: Task): Promise<void> {
-  await updateRun(t.id, { metadata: taskMeta(t) });
+  await updateWorkflow(t.id, { metadata: taskMeta(t) });
 }
 
 async function setState(t: Task, state: string): Promise<void> {
   t.state = state;
   const PAUSED = new Set(["grill_done", "plan_approved"]);
   const DONE = new Set(["pr_merged"]);
-  await updateRun(t.id, { metadata: taskMeta(t), ...(DONE.has(state) ? { status: "completed" } : {}) });
+  await updateWorkflow(t.id, { metadata: taskMeta(t), ...(DONE.has(state) ? { status: "completed" } : {}) });
   if (PAUSED.has(state)) await appendEvent(t.id, "hook.waiting", state, { reason: state });
   else await appendEvent(t.id, "step.started", state, { stage: state });
 }
 
 async function allTasks(): Promise<Task[]> {
-  const runs = await listRuns({ workflowType: WORKFLOW_TYPE, limit: 100 });
-  return runs.map(runToTask).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  const workflows = await listWorkflows({ workflowType: WORKFLOW_TYPE, limit: 100 });
+  return workflows.map(workflowToTask).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 }
 
-async function activeTasks(): Promise<Task[]> {
-  const runs = await listRuns({ workflowType: WORKFLOW_TYPE, status: "running,paused", limit: 100 });
-  return runs.map(runToTask);
+async function activeWorkflows(): Promise<Task[]> {
+  const workflows = await listWorkflows({ workflowType: WORKFLOW_TYPE, status: "running,paused", limit: 100 });
+  return workflows.map(workflowToTask);
 }
 
 // ── App setup ─────────────────────────────────────────────────────────────────
@@ -135,20 +135,20 @@ app.get("/", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.se
 app.get("/screenshots/:filename", (req, res) => { const p = join(SCREENSHOT_DIR, req.params.filename); if (!existsSync(p)) { res.status(404).end(); return; } res.sendFile(p); });
 app.post("/upload", upload.single("file"), (req, res) => { if (!req.file) { res.status(400).json({ error: "no file" }); return; } res.json({ path: req.file.path, filename: req.file.filename }); });
 
-// ── Run list endpoints (generic pass-through) ─────────────────────────────────
+// ── Workflow endpoints ────────────────────────────────────────────────────────
 
 app.get("/tasks", async (_req, res) => { try { res.json((await allTasks()).map(taskDict)); } catch (e) { res.status(500).json({ error: (e as Error).message }); } });
 
-app.get("/api/runs", async (_req, res) => {
+app.get("/api/workflows", async (_req, res) => {
   try {
     const tasks = await allTasks();
-    res.json(tasks.map((t) => ({ run_id: t.id, title: t.title, state: t.state, created_at: t.createdAt.toISOString(), has_session: Boolean(t.sessionId), worktree: t.worktree })));
+    res.json(tasks.map((t) => ({ workflow_id: t.id, title: t.title, state: t.state, created_at: t.createdAt.toISOString(), has_session: Boolean(t.sessionId), worktree: t.worktree })));
   } catch (e) { res.status(500).json({ error: (e as Error).message }); }
 });
 
-app.get("/api/runs/:runId", async (req, res) => { const run = await getRun(req.params.runId); if (!run) { res.status(404).json({ error: "not found" }); return; } res.json(run); });
-app.get("/api/runs/:runId/events", async (req, res) => { try { res.json(await getRunEvents(req.params.runId)); } catch (e) { res.status(500).json({ error: (e as Error).message }); } });
-app.get("/api/runs/:runId/messages", async (req, res) => { try { res.json(await getRunMessages(req.params.runId)); } catch (e) { res.status(500).json({ error: (e as Error).message }); } });
+app.get("/api/workflows/:workflowId", async (req, res) => { const w = await getWorkflow(req.params.workflowId); if (!w) { res.status(404).json({ error: "not found" }); return; } res.json(w); });
+app.get("/api/workflows/:workflowId/events", async (req, res) => { try { res.json(await getEvents(req.params.workflowId)); } catch (e) { res.status(500).json({ error: (e as Error).message }); } });
+app.get("/api/workflows/:workflowId/messages", async (req, res) => { try { res.json(await getMessages(req.params.workflowId)); } catch (e) { res.status(500).json({ error: (e as Error).message }); } });
 
 // ── Chat stream ───────────────────────────────────────────────────────────────
 
@@ -240,7 +240,7 @@ app.post("/tasks/:taskId/grill-approve", async (req, res) => {
   const { user_notes }: { user_notes?: string } = req.body ?? {};
   const send = sse(res);
   const t = await getTask(taskId);
-  if (!t) { res.status(404).json({ error: "task not found" }); return; }
+  if (!t) { res.status(404).json({ error: "not found" }); return; }
 
   const issueText = user_notes ? `${t.plan ?? ""}\n\n### Additional context\n${user_notes}` : (t.plan ?? "");
   appendMessage(taskId, "user", user_notes ?? "(approved — proceed to plan)").catch(() => {});
@@ -264,7 +264,7 @@ app.post("/tasks/:taskId/approve", async (req, res) => {
   const { taskId } = req.params;
   const send = sse(res);
   const t = await getTask(taskId);
-  if (!t) { res.status(404).json({ error: "task not found" }); return; }
+  if (!t) { res.status(404).json({ error: "not found" }); return; }
   if (!t.sessionId && !t.plan) { res.status(400).json({ error: "no session or plan — complete planning first" }); return; }
 
   appendMessage(taskId, "user", "APPROVED — proceed with implementation").catch(() => {});
@@ -288,14 +288,14 @@ app.post("/tasks/:taskId/approve", async (req, res) => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-async function recoverActiveTasks(): Promise<void> {
+async function recoverActive(): Promise<void> {
   try {
-    const active = await activeTasks();
-    if (active.length === 0) console.log("[startup] no active tasks to recover");
+    const active = await activeWorkflows();
+    if (active.length === 0) console.log("[startup] no active workflows to recover");
     else active.forEach((t) => console.log(`[startup] recovered id=${t.id} state=${t.state}`));
   } catch (e) { console.warn("[startup] recovery failed:", (e as Error).message); }
 }
 
-recoverActiveTasks().then(() => {
+recoverActive().then(() => {
   app.listen(PORT, () => console.log(`lite-agents listening on http://localhost:${PORT}`));
 });
