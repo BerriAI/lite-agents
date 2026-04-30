@@ -15,16 +15,7 @@ You get four things:
 | **memory** | each task gets its own git worktree — state never leaks between runs |
 | **cron** | schedule agents on a recurring trigger |
 
-```mermaid
-graph LR
-  A["your agent"] --> G["LiteLLM gateway"]
-  G --> R["run state"]
-  G --> H["conversation history"]
-  G --> S["resume ID\n(crash recovery)"]
-  G --> C["cron triggers"]
-```
-
-No database to set up. No queue to run.
+Backed by LiteLLM gateway. No database to set up. No queue to run.
 
 ---
 
