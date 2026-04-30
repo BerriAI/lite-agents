@@ -1,19 +1,21 @@
 # lite-agents
 
-a thin TypeScript framework for running AI agents with durable task state.
+run AI agents without managing infrastructure.
 
-chat → agent thinks → you approve → agent implements. task state survives restarts.
+you get:
 
-```
-┌──────────┐     ┌──────────────────────────┐     ┌─────────────────┐
-│  Chat UI │────▶│  grill → plan → implement │────▶│  LiteLLM proxy  │
-│          │◀────│  human gate at each step  │◀────│  task state     │
-└──────────┘     └──────────────────────────┘     │  run events     │
-                                                   │  messages       │
-                                                   └─────────────────┘
-```
+- **durable workflows** — tasks survive restarts, resume mid-run after crashes
+- **sessions** — conversation history persisted per run, Claude `--resume` IDs stored automatically
+- **memory** — agent reads/writes to an isolated git worktree per task; state never leaks between runs
+- **cron** — schedule agents on a recurring trigger via LiteLLM proxy
 
-## Install
+backed by LiteLLM proxy. no database to set up, no queue to run, no state management to write.
+
+---
+
+## Get started
+
+### 1. Fork the repo
 
 ```bash
 git clone https://github.com/BerriAI/lite-agents
@@ -21,7 +23,43 @@ cd lite-agents
 npm install
 ```
 
-## Run
+### 2. Add skills
+
+Skills are `.md` files injected into agent prompts. Drop them in `skills/` — they load automatically:
+
+```
+skills/
+  grill_me.md      # how the agent clarifies requirements
+  plan_repro.md    # how the agent plans a fix
+  implement.md     # how the agent executes
+```
+
+Edit these to change agent behaviour without touching code.
+
+### 3. Plug in your agent
+
+Edit `src/agent.ts` — this is the only file you touch to swap agent frameworks:
+
+```typescript
+// src/agent.ts
+export { claudeCodeAgent as agent } from "./agents/claude-code.js";
+```
+
+To use your own agent, implement `AgentEntrypoint` from `src/agent-spec.ts`:
+
+```typescript
+import type { AgentEntrypoint } from "./agent-spec.js";
+
+export const agent: AgentEntrypoint = async function*(prompt, { cwd, resumeId }) {
+  // yield AgentMessage events as your agent works
+  // resumeId is set when resuming an interrupted run
+  yield { type: "text", text: "done" };
+};
+```
+
+Any agent framework works — Claude Agent SDK, PydanticAI, LangGraph, raw API calls.
+
+### 4. Run
 
 ```bash
 LITELLM_PROXY_URL=http://localhost:4000 \
@@ -31,48 +69,36 @@ npm start
 
 Open http://localhost:8001
 
-## Customize
-
-### 1. Swap the agent
-
-Edit `src/agent.ts`. Default is Claude Code via `@anthropic-ai/claude-agent-sdk`:
-
-```typescript
-// src/agent.ts — edit this file to swap agents, nothing else changes
-export { claudeCodeAgent as agent } from "./agents/claude-code.js";
-```
-
-Implement `AgentEntrypoint` from `src/agent-spec.ts` to plug in any framework:
-
-```typescript
-import type { AgentEntrypoint } from "./agent-spec.js";
-
-export const agent: AgentEntrypoint = async function*(prompt, { cwd, resumeId }) {
-  // yield AgentMessage events — text, tool_call, tool_result, stats, error
-  yield { type: "text", text: "done" };
-};
-```
-
-### 2. Add skills
-
-Drop `.md` files into `skills/`. They are loaded by name and injected into prompts:
-
-```
-skills/
-  grill_me.md      # injected during the grill (clarification) stage
-  plan_repro.md    # injected during planning
-  implement.md     # injected during implementation
-```
+---
 
 ## How it works
 
 Three stages, each a human approval gate:
 
-1. **Grill** — agent reads the issue, asks 2–3 focused clarifying questions
-2. **Plan** — agent writes a repro + fix plan; you approve, correct, or skip
-3. **Implement** — agent executes the plan in an isolated git worktree
+```
+describe issue
+      │
+      ▼
+  ┌───────┐   clarifying     ┌──────┐
+  │ Grill │ ──questions──▶   │ You  │
+  │       │ ◀──approve/fix── │      │
+  └───────┘                  └──────┘
+      │ approved
+      ▼
+  ┌──────┐    plan ready     ┌──────┐
+  │ Plan │ ──────────────▶   │ You  │
+  │      │ ◀───approve────── │      │
+  └──────┘                   └──────┘
+      │ approved
+      ▼
+  ┌──────────┐
+  │ Implement│ ──▶ git worktree ──▶ PR
+  └──────────┘
+```
 
-State (task status, run events, conversation) persists in the LiteLLM proxy DB. Kill the server mid-run, restart, pick the task from the sidebar — Claude `--resume` ID is stored in the last event and recovery is automatic.
+All state is stored in LiteLLM proxy DB (`WorkflowRun`, `WorkflowEvent`, `WorkflowMessage`). Kill the server, restart, pick any task from the sidebar — runs continue from where they left off.
+
+---
 
 ## Env vars
 
@@ -86,5 +112,5 @@ State (task status, run events, conversation) persists in the LiteLLM proxy DB. 
 ## Requirements
 
 - Node.js 20+
-- Claude Code CLI authenticated: `claude auth login`
-- LiteLLM proxy with workflow runs API (`POST /v1/workflows/runs`)
+- Claude Code CLI: `claude auth login`
+- LiteLLM proxy with workflow runs API
