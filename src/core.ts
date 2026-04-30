@@ -1,13 +1,15 @@
 import { existsSync, readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { homedir } from "os";
 import { spawn } from "child_process";
 import type { AgentEntrypoint, AgentMessage } from "./agent-spec.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const LITELLM_REPO = process.env.LITELLM_REPO ?? join(homedir(), "github/litellm");
+if (!process.env.REPO_PATH) {
+  throw new Error("REPO_PATH is required — set it to the git repo you want the agent to work in");
+}
+const REPO_PATH = process.env.REPO_PATH;
 const SKILLS_DIR = join(__dirname, "../skills");
 
 // AgentEvent extends AgentMessage with framework-internal signals
@@ -22,13 +24,13 @@ export function loadSkill(name: string): string {
 }
 
 function worktreePath(taskId: string): string {
-  return join(LITELLM_REPO, ".claude", "worktrees", `task-${taskId}`);
+  return join(REPO_PATH, ".claude", "worktrees", `task-${taskId}`);
 }
 
 export async function provisionWorktree(taskId: string): Promise<string> {
   const wt = worktreePath(taskId);
   if (!existsSync(wt)) {
-    await runCommand("git", ["worktree", "add", wt, "-b", `task-${taskId}`], LITELLM_REPO);
+    await runCommand("git", ["worktree", "add", wt, "-b", `task-${taskId}`], REPO_PATH);
   }
   return wt;
 }
