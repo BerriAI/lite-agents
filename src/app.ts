@@ -18,7 +18,7 @@ import {
 } from "./workflows.js";
 
 import { AgentEvent, runGrill, runPlan, runImplement, runImplementFromPlan } from "./core.js";
-import { claudeCodeAgent as agent } from "./agents/claude-code.js";
+import { defaultAgentName, getAgent, listAgents } from "./agent-registry.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCREENSHOT_DIR = "/tmp/claude-screenshots";
@@ -39,6 +39,7 @@ interface Task {
   grillSessionId: string | null;
   sessionId: string | null;
   prUrl: string | null;
+  agentName: string;
 }
 
 function workflowToTask(w: Workflow): Task {
@@ -53,6 +54,7 @@ function workflowToTask(w: Workflow): Task {
     grillSessionId: (m.grill_session_id as string | null) ?? null,
     sessionId: (m.session_id as string | null) ?? null,
     prUrl: (m.pr_url as string | null) ?? null,
+    agentName: (m.agent_name as string) ?? defaultAgentName(),
   };
 }
 
@@ -65,6 +67,7 @@ function taskMeta(t: Task): Record<string, unknown> {
     grill_session_id: t.grillSessionId,
     session_id: t.sessionId,
     pr_url: t.prUrl,
+    agent_name: t.agentName,
   };
 }
 
@@ -73,11 +76,12 @@ async function getTask(id: string): Promise<Task | null> {
   return w ? workflowToTask(w) : null;
 }
 
-async function createTask(title: string): Promise<Task> {
+async function createTask(title: string, agentName: string): Promise<Task> {
   const w = await createWorkflow(WORKFLOW_TYPE, {
     state: "open", title: title.slice(0, 80),
     worktree_path: null, plan_text: null,
     grill_session_id: null, session_id: null, pr_url: null,
+    agent_name: agentName,
   });
   return workflowToTask(w);
 }
@@ -118,7 +122,7 @@ const upload = multer({
 });
 
 function taskDict(t: Task): Record<string, unknown> {
-  return { id: t.id, title: t.title, state: t.state, created_at: t.createdAt.toISOString(), has_session: Boolean(t.sessionId), pr_url: t.prUrl, plan: t.plan };
+  return { id: t.id, title: t.title, state: t.state, created_at: t.createdAt.toISOString(), has_session: Boolean(t.sessionId), pr_url: t.prUrl, plan: t.plan, agent: t.agentName };
 }
 
 function sse(res: Response): (data: unknown) => void {
@@ -150,16 +154,25 @@ app.get("/api/workflows/:workflowId", async (req, res) => { const w = await getW
 app.get("/api/workflows/:workflowId/events", async (req, res) => { try { res.json(await getEvents(req.params.workflowId)); } catch (e) { res.status(500).json({ error: (e as Error).message }); } });
 app.get("/api/workflows/:workflowId/messages", async (req, res) => { try { res.json(await getMessages(req.params.workflowId)); } catch (e) { res.status(500).json({ error: (e as Error).message }); } });
 
+app.get("/api/agents", (_req, res) => { try { res.json({ default: defaultAgentName(), agents: listAgents() }); } catch (e) { res.status(500).json({ error: (e as Error).message }); } });
+
 // ── Chat stream ───────────────────────────────────────────────────────────────
 
 const PLAN_BYPASS = ["i have a plan:", "i have a plan", "skip to implement", "/implement"];
 
 app.post("/chat/stream", async (req: Request, res: Response) => {
-  const { message, task_id }: { message: string; task_id?: string } = req.body;
+  const { message, task_id, agent: agentParam, model }: { message: string; task_id?: string; agent?: string; model?: string } = req.body;
   const send = sse(res);
 
-  let task = task_id ? await getTask(task_id) : await createTask(message.slice(0, 80));
+  // Pick the agent: explicit param > existing task's stored agent > registry default.
+  // `model` is accepted as an alias so callers can think of it like an LLM model name.
+  const requestedAgent = agentParam ?? model ?? null;
+  let task = task_id ? await getTask(task_id) : await createTask(message.slice(0, 80), requestedAgent ?? defaultAgentName());
   if (!task) { res.status(404).json({ error: "task not found" }); return; }
+
+  let agent;
+  try { agent = await getAgent(requestedAgent ?? task.agentName); }
+  catch (e) { res.status(400).json({ error: (e as Error).message }); return; }
 
   appendMessage(task.id, "user", message).catch(() => {});
   const msgLower = message.trim().toLowerCase();
@@ -242,6 +255,10 @@ app.post("/tasks/:taskId/grill-approve", async (req, res) => {
   const t = await getTask(taskId);
   if (!t) { res.status(404).json({ error: "not found" }); return; }
 
+  let agent;
+  try { agent = await getAgent(t.agentName); }
+  catch (e) { res.status(400).json({ error: (e as Error).message }); return; }
+
   const issueText = user_notes ? `${t.plan ?? ""}\n\n### Additional context\n${user_notes}` : (t.plan ?? "");
   appendMessage(taskId, "user", user_notes ?? "(approved — proceed to plan)").catch(() => {});
   await setState(t, "planning");
@@ -266,6 +283,10 @@ app.post("/tasks/:taskId/approve", async (req, res) => {
   const t = await getTask(taskId);
   if (!t) { res.status(404).json({ error: "not found" }); return; }
   if (!t.sessionId && !t.plan) { res.status(400).json({ error: "no session or plan — complete planning first" }); return; }
+
+  let agent;
+  try { agent = await getAgent(t.agentName); }
+  catch (e) { res.status(400).json({ error: (e as Error).message }); return; }
 
   appendMessage(taskId, "user", "APPROVED — proceed with implementation").catch(() => {});
   await setState(t, "implemented");

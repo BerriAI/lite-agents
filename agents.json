@@ -1,0 +1,10 @@
+{
+  "default": "claude-code",
+  "agents": {
+    "claude-code": {
+      "path": "./src/agents/claude-code.ts",
+      "export": "claudeCodeAgent",
+      "description": "Anthropic Claude via @anthropic-ai/claude-agent-sdk"
+    }
+  }
+}
