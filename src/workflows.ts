@@ -1,5 +1,3 @@
-import fetch from "node-fetch";
-
 const BASE = (process.env.LITELLM_PROXY_URL ?? "").replace(/\/$/, "");
 const KEY = process.env.LITELLM_API_KEY ?? "";
 
