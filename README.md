@@ -6,74 +6,21 @@ Kill the server mid-run. Restart. Pick up where you left off.
 
 ---
 
-Every run is stored in LiteLLM proxy — status, conversation history, the Claude `--resume` session ID. On restart, active runs recover automatically. No state lives in memory.
+You get four things:
 
-You get:
+| | |
+|---|---|
+| **durable runs** | tasks survive restarts, resume after crashes |
+| **sessions** | conversation history persisted per run |
+| **memory** | each task gets its own git worktree — state never leaks between runs |
+| **cron** | schedule agents on a recurring trigger |
 
-- **durable runs** — survive restarts, resume after crashes
-- **conversation history** — full message log per run, queryable
-- **isolated memory** — each task gets its own git worktree; state never leaks between runs
-- **cron** — schedule agents on a recurring trigger via LiteLLM proxy
-
-No database to set up, no queue to run, no state management to write. LiteLLM proxy handles it.
-
----
-
-## How it works
+Backed by LiteLLM gateway. It stores run state, conversation history, and the resume ID needed to pick up a crashed Claude session. No database to set up, no queue to run.
 
 ```
-describe issue
-      │
-      ▼
-  ┌───────┐   clarifying     ┌──────┐
-  │ Grill │ ──questions──▶   │ You  │
-  │       │ ◀──approve/fix── │      │
-  └───────┘                  └──────┘
-      │ approved
-      ▼
-  ┌──────┐    plan ready     ┌──────┐
-  │ Plan │ ──────────────▶   │ You  │
-  │      │ ◀───approve────── │      │
-  └──────┘                   └──────┘
-      │ approved
-      ▼
-  ┌──────────┐
-  │ Implement│ ──▶ git worktree ──▶ PR
-  └──────────┘
+your agent  ──▶  LiteLLM gateway  ──▶  WorkflowRun / WorkflowEvent / WorkflowMessage
+                 (stores everything)
 ```
-
-Three stages, each a human approval gate. Kill the server at any point — restart and every run picks back up from its last checkpoint.
-
----
-
-## Infra
-
-```mermaid
-graph LR
-  subgraph "your machine"
-    A["lite-agents\n(Express + TypeScript)"]
-    W["git worktree\n.claude/worktrees/task-{id}"]
-  end
-
-  SDK["@anthropic-ai/claude-agent-sdk"]
-  C["Claude API"]
-
-  subgraph "LiteLLM Proxy"
-    P["workflow runs API"]
-    DB[("Postgres")]
-  end
-
-  A --> SDK --> C
-  A --> P --> DB
-
-  DB --- R["WorkflowRun\nrun_id · status · metadata"]
-  DB --- E["WorkflowEvent\nstep name · --resume session_id"]
-  DB --- M["WorkflowMessage\nrole · content · sequence"]
-
-  A --> W
-```
-
-`WorkflowEvent.data.session_id` is the Claude `--resume` ID. That's what makes kill-and-resume work.
 
 ---
 
@@ -82,7 +29,7 @@ graph LR
 ### 1. Scaffold
 
 ```bash
-npx lite-agents init my-agent
+npx lite-agents init
 cd my-agent
 npm install
 ```
@@ -104,11 +51,11 @@ cp .env.example .env
 ```env
 LITELLM_PROXY_URL=http://localhost:4000
 LITELLM_API_KEY=sk-...
-REPO_PATH=/path/to/your/git/repo   # the repo the agent will work in
+REPO_PATH=/path/to/your/git/repo
 PORT=8001
 ```
 
-`REPO_PATH` is the git repository the agent checks out worktrees from. It can be any repo — not just LiteLLM.
+`REPO_PATH` is the git repo the agent checks out worktrees from.
 
 ### 3. Add skills
 
@@ -132,7 +79,7 @@ Edit these to change agent behaviour without touching code.
 export { claudeCodeAgent as agent } from "./agents/claude-code.js";
 ```
 
-Default: Claude Code via `@anthropic-ai/claude-agent-sdk` — the most widely adopted Claude agent SDK.
+Default: Claude Code via `@anthropic-ai/claude-agent-sdk`.
 
 To use your own agent, implement `AgentEntrypoint` from `src/agent-spec.ts`:
 
@@ -146,7 +93,7 @@ export const agent: AgentEntrypoint = async function*(prompt, { cwd, resumeId })
 };
 ```
 
-Any agent implementation works — PydanticAI over HTTP, LangGraph, raw API calls, whatever.
+Any agent implementation works — PydanticAI, LangGraph, raw API calls, whatever.
 
 ### 5. Run
 
